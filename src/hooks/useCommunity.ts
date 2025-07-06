@@ -21,6 +21,11 @@ export const useCommunity = (movieId?: string) => {
       setLoading(true);
       setError(null);
 
+      // Set user context if authenticated
+      if (user.isAuthenticated) {
+        await setUserContext(user.id);
+      }
+
       // Fetch approved posts with comments
       const { data: postsData, error: postsError } = await supabase
         .from('community_posts')
@@ -35,6 +40,7 @@ export const useCommunity = (movieId?: string) => {
         .order('created_at', { ascending: false });
 
       if (postsError) {
+        console.error('Error fetching posts:', postsError);
         throw postsError;
       }
 
@@ -134,6 +140,29 @@ export const useCommunity = (movieId?: string) => {
       // Set user context before creating post
       await setUserContext(user.id);
 
+      // Ensure user profile exists in Supabase
+      const { data: existingProfile } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!existingProfile) {
+        // Create user profile if it doesn't exist
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .insert({
+            user_id: user.id,
+            username: user.username,
+            profile_picture: user.profilePicture || '',
+            is_admin: user.isAdmin || false
+          });
+
+        if (profileError) {
+          console.error('Error creating user profile:', profileError);
+        }
+      }
+
       const postPayload = {
         user_id: user.id,
         username: user.username,
@@ -232,7 +261,7 @@ export const useCommunity = (movieId?: string) => {
         .eq('user_id', user.id)
         .eq(targetType === 'post' ? 'post_id' : 'comment_id', targetId)
         .eq('reaction_type', reactionType)
-        .single();
+        .maybeSingle();
 
       if (existingReaction) {
         // Remove existing reaction

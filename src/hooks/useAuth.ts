@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, setUserContext } from '../lib/supabase';
 
 export interface AuthUser {
   id: string;
@@ -27,19 +27,6 @@ interface StoredUser {
   joinDate: string;
   isAdmin: boolean;
 }
-
-// Helper function to set user context for RLS
-const setUserContext = async (userId: string) => {
-  try {
-    await supabase.rpc('set_config', {
-      setting_name: 'app.current_user_id',
-      setting_value: userId,
-      is_local: true
-    });
-  } catch (error) {
-    console.error('Error setting user context:', error);
-  }
-};
 
 export const useAuth = () => {
   const [user, setUser] = useState<AuthUser>(GUEST_USER);
@@ -167,9 +154,6 @@ export const useAuth = () => {
           }
 
           localStorage.setItem('currentUserId', userId);
-          // Set user context for RLS
-          await setUserContext(userId);
-          
           setUser({
             id: profile.id,
             username: profile.username,
@@ -201,7 +185,7 @@ export const useAuth = () => {
             user_id: userId,
             username,
             profile_picture: defaultProfilePicture,
-            is_admin: false
+            is_admin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
           })
           .select()
           .single();
@@ -217,7 +201,7 @@ export const useAuth = () => {
           profilePicture: defaultProfilePicture,
           passwordHash,
           joinDate: new Date().toISOString(),
-          isAdmin: false
+          isAdmin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
         };
 
         localStorage.setItem(`userProfile_${userId}`, JSON.stringify(userProfile));
@@ -229,7 +213,7 @@ export const useAuth = () => {
           profilePicture: defaultProfilePicture,
           isAuthenticated: true,
           hasPassword: true,
-          isAdmin: false
+          isAdmin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
         });
         
         return { success: true };

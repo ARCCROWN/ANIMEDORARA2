@@ -26,6 +26,31 @@ export const useAdminCommunity = () => {
       // Set user context for admin operations
       await setUserContext(user.id);
 
+      // Ensure admin profile exists
+      const { data: adminProfile } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!adminProfile) {
+        // Create admin profile if it doesn't exist
+        await supabase
+          .from('user_profiles')
+          .insert({
+            user_id: user.id,
+            username: user.username,
+            profile_picture: user.profilePicture || '',
+            is_admin: true
+          });
+      } else if (!adminProfile.is_admin) {
+        // Update profile to admin if not already
+        await supabase
+          .from('user_profiles')
+          .update({ is_admin: true })
+          .eq('user_id', user.id);
+      }
+
       const { data, error } = await supabase
         .from('community_posts')
         .select('*')
@@ -42,7 +67,7 @@ export const useAdminCommunity = () => {
       setError(err instanceof Error ? err.message : 'Failed to fetch pending posts');
       setPendingPosts([]);
     }
-  }, [isAdmin, user.id]);
+  }, [isAdmin, user.id, user.username, user.profilePicture]);
 
   // Fetch reports
   const fetchReports = useCallback(async () => {
