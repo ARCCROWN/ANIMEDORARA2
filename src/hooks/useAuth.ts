@@ -43,7 +43,7 @@ export const useAuth = () => {
         // Set user context for RLS
         await setUserContext(currentUserId);
         
-        // Check if user exists in Supabase - use maybeSingle() to avoid errors when no row found
+        // Check if user exists in Supabase
         const { data: profile, error } = await supabase
           .from('user_profiles')
           .select('*')
@@ -64,10 +64,25 @@ export const useAuth = () => {
             isAdmin: profile.is_admin
           });
         } else {
-          // Fallback to localStorage
+          // Fallback to localStorage and create Supabase profile
           const userProfile = localStorage.getItem(`userProfile_${currentUserId}`);
           if (userProfile) {
             const profile: StoredUser = JSON.parse(userProfile);
+            
+            // Create profile in Supabase
+            try {
+              await supabase
+                .from('user_profiles')
+                .upsert({
+                  user_id: profile.id,
+                  username: profile.username,
+                  profile_picture: profile.profilePicture,
+                  is_admin: profile.isAdmin || false
+                });
+            } catch (error) {
+              console.error('Error creating profile in Supabase:', error);
+            }
+
             setUser({
               id: profile.id,
               username: profile.username,
@@ -105,7 +120,7 @@ export const useAuth = () => {
         // Set user context for RLS
         await setUserContext(userId);
         
-        // Check Supabase first - use maybeSingle() to avoid errors when no row found
+        // Check Supabase first
         const { data: profile, error } = await supabase
           .from('user_profiles')
           .select('*')
@@ -174,6 +189,7 @@ export const useAuth = () => {
 
         const passwordHash = hashPassword(password);
         const defaultProfilePicture = profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+        const isAdminUser = username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator');
         
         // Set user context for RLS before creating profile
         await setUserContext(userId);
@@ -181,17 +197,18 @@ export const useAuth = () => {
         // Create user profile in Supabase
         const { data: newProfile, error } = await supabase
           .from('user_profiles')
-          .insert({
+          .upsert({
             user_id: userId,
             username,
             profile_picture: defaultProfilePicture,
-            is_admin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
+            is_admin: isAdminUser
           })
           .select()
           .single();
 
         if (error) {
           console.error('Error creating profile in Supabase:', error);
+          // Continue with localStorage fallback
         }
 
         // Save to localStorage as backup
@@ -201,7 +218,7 @@ export const useAuth = () => {
           profilePicture: defaultProfilePicture,
           passwordHash,
           joinDate: new Date().toISOString(),
-          isAdmin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
+          isAdmin: isAdminUser
         };
 
         localStorage.setItem(`userProfile_${userId}`, JSON.stringify(userProfile));
@@ -213,7 +230,7 @@ export const useAuth = () => {
           profilePicture: defaultProfilePicture,
           isAuthenticated: true,
           hasPassword: true,
-          isAdmin: username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator')
+          isAdmin: isAdminUser
         });
         
         return { success: true };
@@ -242,11 +259,12 @@ export const useAuth = () => {
       // Update Supabase
       await supabase
         .from('user_profiles')
-        .update({
-          username: updates.username,
-          profile_picture: updates.profilePicture
-        })
-        .eq('user_id', user.id);
+        .upsert({
+          user_id: user.id,
+          username: updates.username || user.username,
+          profile_picture: updates.profilePicture || user.profilePicture,
+          is_admin: user.isAdmin
+        });
 
       // Update localStorage
       const userProfile = JSON.parse(localStorage.getItem(`userProfile_${user.id}`) || '{}');
@@ -318,8 +336,12 @@ export const useAuth = () => {
       // Update user profile to admin
       await supabase
         .from('user_profiles')
-        .update({ is_admin: true })
-        .eq('user_id', user.id);
+        .upsert({
+          user_id: user.id,
+          username: user.username,
+          profile_picture: user.profilePicture,
+          is_admin: true
+        });
 
       // Update local state
       const updatedUser = { ...user, isAdmin: true };

@@ -8,10 +8,38 @@ export const useCommunity = (movieId?: string) => {
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
-  // Set user context for RLS
-  useEffect(() => {
-    if (user.isAuthenticated) {
-      setUserContext(user.id);
+  // Ensure user profile exists in Supabase
+  const ensureUserProfile = useCallback(async () => {
+    if (!user.isAuthenticated) return;
+
+    try {
+      await setUserContext(user.id);
+
+      const { data: existingProfile } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!existingProfile) {
+        console.log('Creating user profile for:', user.username);
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: user.id,
+            username: user.username,
+            profile_picture: user.profilePicture || '',
+            is_admin: user.isAdmin || false
+          });
+
+        if (profileError) {
+          console.error('Error creating user profile:', profileError);
+        } else {
+          console.log('User profile created successfully');
+        }
+      }
+    } catch (error) {
+      console.error('Error ensuring user profile:', error);
     }
   }, [user]);
 
@@ -24,6 +52,7 @@ export const useCommunity = (movieId?: string) => {
       // Set user context if authenticated
       if (user.isAuthenticated) {
         await setUserContext(user.id);
+        await ensureUserProfile();
       }
 
       // Fetch approved posts with comments
@@ -76,7 +105,7 @@ export const useCommunity = (movieId?: string) => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, ensureUserProfile]);
 
   // Set up real-time subscriptions
   useEffect(() => {
@@ -137,31 +166,9 @@ export const useCommunity = (movieId?: string) => {
     }
 
     try {
-      // Set user context before creating post
+      // Set user context and ensure profile exists
       await setUserContext(user.id);
-
-      // Ensure user profile exists in Supabase
-      const { data: existingProfile } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!existingProfile) {
-        // Create user profile if it doesn't exist
-        const { error: profileError } = await supabase
-          .from('user_profiles')
-          .insert({
-            user_id: user.id,
-            username: user.username,
-            profile_picture: user.profilePicture || '',
-            is_admin: user.isAdmin || false
-          });
-
-        if (profileError) {
-          console.error('Error creating user profile:', profileError);
-        }
-      }
+      await ensureUserProfile();
 
       const postPayload = {
         user_id: user.id,
@@ -205,8 +212,9 @@ export const useCommunity = (movieId?: string) => {
     }
 
     try {
-      // Set user context before creating comment
+      // Set user context and ensure profile exists
       await setUserContext(user.id);
+      await ensureUserProfile();
 
       const { data, error } = await supabase
         .from('community_comments')
@@ -245,8 +253,9 @@ export const useCommunity = (movieId?: string) => {
     }
 
     try {
-      // Set user context before reacting
+      // Set user context and ensure profile exists
       await setUserContext(user.id);
+      await ensureUserProfile();
 
       const reactionData = {
         user_id: user.id,
@@ -302,8 +311,9 @@ export const useCommunity = (movieId?: string) => {
     }
 
     try {
-      // Set user context before reporting
+      // Set user context and ensure profile exists
       await setUserContext(user.id);
+      await ensureUserProfile();
 
       const { error } = await supabase
         .from('community_reports')

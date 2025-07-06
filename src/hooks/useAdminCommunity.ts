@@ -15,6 +15,41 @@ export const useAdminCommunity = () => {
     user.username.toLowerCase().includes('moderator')
   );
 
+  // Ensure admin profile exists in Supabase
+  const ensureAdminProfile = useCallback(async () => {
+    if (!isAdmin) return;
+
+    try {
+      await setUserContext(user.id);
+
+      const { data: adminProfile } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!adminProfile) {
+        console.log('Creating admin profile for:', user.username);
+        await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: user.id,
+            username: user.username,
+            profile_picture: user.profilePicture || '',
+            is_admin: true
+          });
+      } else if (!adminProfile.is_admin) {
+        console.log('Updating profile to admin for:', user.username);
+        await supabase
+          .from('user_profiles')
+          .update({ is_admin: true })
+          .eq('user_id', user.id);
+      }
+    } catch (error) {
+      console.error('Error ensuring admin profile:', error);
+    }
+  }, [isAdmin, user.id, user.username, user.profilePicture]);
+
   // Fetch pending posts for admin approval
   const fetchPendingPosts = useCallback(async () => {
     if (!isAdmin) {
@@ -23,33 +58,9 @@ export const useAdminCommunity = () => {
     }
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
-
-      // Ensure admin profile exists
-      const { data: adminProfile } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!adminProfile) {
-        // Create admin profile if it doesn't exist
-        await supabase
-          .from('user_profiles')
-          .insert({
-            user_id: user.id,
-            username: user.username,
-            profile_picture: user.profilePicture || '',
-            is_admin: true
-          });
-      } else if (!adminProfile.is_admin) {
-        // Update profile to admin if not already
-        await supabase
-          .from('user_profiles')
-          .update({ is_admin: true })
-          .eq('user_id', user.id);
-      }
+      await ensureAdminProfile();
 
       const { data, error } = await supabase
         .from('community_posts')
@@ -67,15 +78,16 @@ export const useAdminCommunity = () => {
       setError(err instanceof Error ? err.message : 'Failed to fetch pending posts');
       setPendingPosts([]);
     }
-  }, [isAdmin, user.id, user.username, user.profilePicture]);
+  }, [isAdmin, user.id, ensureAdminProfile]);
 
   // Fetch reports
   const fetchReports = useCallback(async () => {
     if (!isAdmin) return;
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { data, error } = await supabase
         .from('community_reports')
@@ -97,7 +109,7 @@ export const useAdminCommunity = () => {
       setError(err instanceof Error ? err.message : 'Failed to fetch reports');
       setReports([]);
     }
-  }, [isAdmin, user.id]);
+  }, [isAdmin, user.id, ensureAdminProfile]);
 
   // Set up real-time subscriptions for admin
   useEffect(() => {
@@ -154,8 +166,9 @@ export const useAdminCommunity = () => {
     if (!isAdmin) throw new Error('Unauthorized');
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { error } = await supabase
         .from('community_posts')
@@ -179,8 +192,9 @@ export const useAdminCommunity = () => {
     if (!isAdmin) throw new Error('Unauthorized');
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { error } = await supabase
         .from('community_posts')
@@ -204,8 +218,9 @@ export const useAdminCommunity = () => {
     if (!isAdmin) throw new Error('Unauthorized');
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { error } = await supabase
         .from('community_posts')
@@ -229,8 +244,9 @@ export const useAdminCommunity = () => {
     if (!isAdmin) throw new Error('Unauthorized');
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { error } = await supabase
         .from('community_comments')
@@ -251,8 +267,9 @@ export const useAdminCommunity = () => {
     if (!isAdmin) throw new Error('Unauthorized');
 
     try {
-      // Set user context for admin operations
+      // Set user context and ensure admin profile exists
       await setUserContext(user.id);
+      await ensureAdminProfile();
 
       const { error } = await supabase
         .from('community_reports')
