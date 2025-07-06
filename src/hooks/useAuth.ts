@@ -28,6 +28,19 @@ interface StoredUser {
   isAdmin: boolean;
 }
 
+// Helper function to set user context for RLS
+const setUserContext = async (userId: string) => {
+  try {
+    await supabase.rpc('set_config', {
+      setting_name: 'app.current_user_id',
+      setting_value: userId,
+      is_local: true
+    });
+  } catch (error) {
+    console.error('Error setting user context:', error);
+  }
+};
+
 export const useAuth = () => {
   const [user, setUser] = useState<AuthUser>(GUEST_USER);
   const [loading, setLoading] = useState(true);
@@ -40,12 +53,19 @@ export const useAuth = () => {
     try {
       const currentUserId = localStorage.getItem('currentUserId');
       if (currentUserId) {
-        // Check if user exists in Supabase
-        const { data: profile } = await supabase
+        // Set user context for RLS
+        await setUserContext(currentUserId);
+        
+        // Check if user exists in Supabase - use maybeSingle() to avoid errors when no row found
+        const { data: profile, error } = await supabase
           .from('user_profiles')
           .select('*')
           .eq('user_id', currentUserId)
-          .single();
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error fetching profile from Supabase:', error);
+        }
 
         if (profile) {
           setUser({
@@ -95,12 +115,19 @@ export const useAuth = () => {
     
     try {
       if (isLogin) {
-        // Check Supabase first
-        const { data: profile } = await supabase
+        // Set user context for RLS
+        await setUserContext(userId);
+        
+        // Check Supabase first - use maybeSingle() to avoid errors when no row found
+        const { data: profile, error } = await supabase
           .from('user_profiles')
           .select('*')
           .eq('user_id', userId)
-          .single();
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error fetching profile from Supabase:', error);
+        }
 
         if (profile) {
           // Verify password (in production, use proper password verification)
@@ -140,6 +167,9 @@ export const useAuth = () => {
           }
 
           localStorage.setItem('currentUserId', userId);
+          // Set user context for RLS
+          await setUserContext(userId);
+          
           setUser({
             id: profile.id,
             username: profile.username,
@@ -160,6 +190,9 @@ export const useAuth = () => {
 
         const passwordHash = hashPassword(password);
         const defaultProfilePicture = profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+        
+        // Set user context for RLS before creating profile
+        await setUserContext(userId);
         
         // Create user profile in Supabase
         const { data: newProfile, error } = await supabase
@@ -219,6 +252,9 @@ export const useAuth = () => {
       const updatedUser = { ...user, ...updates };
       setUser(updatedUser);
 
+      // Set user context for RLS
+      await setUserContext(user.id);
+
       // Update Supabase
       await supabase
         .from('user_profiles')
@@ -270,13 +306,16 @@ export const useAuth = () => {
     if (!user.isAuthenticated) return { success: false, error: 'Not authenticated' };
 
     try {
+      // Set user context for RLS
+      await setUserContext(user.id);
+      
       // Check if key exists and is unused
       const { data: adminKey, error: keyError } = await supabase
         .from('admin_keys')
         .select('*')
         .eq('key_code', keyCode)
         .eq('is_used', false)
-        .single();
+        .maybeSingle();
 
       if (keyError || !adminKey) {
         return { success: false, error: 'Invalid or already used admin key' };
