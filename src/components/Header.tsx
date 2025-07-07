@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Bell, Menu, X, User, MessageSquare, LogOut, Database, Shield } from 'lucide-react';
+import { Search, Bell, Menu, X, User, MessageSquare, LogOut } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useAuth } from '../hooks/useAuth';
 import NotificationDropdown from './NotificationDropdown';
 import UserProfile from './UserProfile';
 import CommunityModal from './CommunityModal';
 import AuthModal from './AuthModal';
-import SetupInstructions from './SetupInstructions';
-import AdminPanel from './AdminPanel';
 
 interface HeaderProps {
   onSearchChange: (query: string) => void;
@@ -20,16 +18,10 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCommunityOpen, setIsCommunityOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [showSetupInstructions, setShowSetupInstructions] = useState(false);
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const { getUnreadCount, notifications } = useNotifications();
-  const { user, logout, isAuthenticated, isAdmin } = useAuth();
+  const { user, profile, signOut, isAuthenticated } = useAuth();
 
   const [unreadCount, setUnreadCount] = useState(0);
-
-  // Check if we're in demo mode
-  const isDemoMode = !import.meta.env.VITE_SUPABASE_URL || 
-                     import.meta.env.VITE_SUPABASE_URL === 'https://demo.supabase.co';
 
   // Update unread count when notifications change
   useEffect(() => {
@@ -82,25 +74,14 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
     }
   };
 
-  const handleAdminClick = () => {
-    if (!isAuthenticated) {
-      setIsAuthModalOpen(true);
-    } else if (isAdmin()) {
-      setShowAdminPanel(true);
-    }
-  };
-
   const handleAuthSuccess = () => {
     setIsAuthModalOpen(false);
-    // Optionally open community modal after successful auth
-    setIsCommunityOpen(true);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await signOut();
     setIsProfileOpen(false);
     setIsCommunityOpen(false);
-    setShowAdminPanel(false);
   };
 
   return (
@@ -110,11 +91,6 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
           {/* Logo */}
           <div className="flex items-center">
             <h1 className="text-white text-xl font-bold">ProjectZ</h1>
-            {isDemoMode && (
-              <span className="ml-2 bg-yellow-600 text-black px-2 py-1 rounded text-xs font-semibold">
-                DEMO
-              </span>
-            )}
           </div>
 
           {/* Search Bar - Desktop */}
@@ -133,30 +109,6 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
 
           {/* Right side icons */}
           <div className="flex items-center space-x-4">
-            {/* Setup Instructions for Demo Mode */}
-            {isDemoMode && (
-              <button
-                onClick={() => setShowSetupInstructions(true)}
-                className="text-yellow-400 hover:text-yellow-300 transition-colors duration-200 relative"
-                aria-label="Setup Instructions"
-                title="Setup real-time community"
-              >
-                <Database className="w-6 h-6" />
-              </button>
-            )}
-
-            {/* Admin Panel */}
-            {isAuthenticated && isAdmin() && (
-              <button
-                onClick={handleAdminClick}
-                className="text-yellow-400 hover:text-yellow-300 transition-colors duration-200 relative"
-                aria-label="Admin Panel"
-                title="Admin Panel"
-              >
-                <Shield className="w-6 h-6" />
-              </button>
-            )}
-
             {/* Community */}
             <button
               onClick={handleCommunityClick}
@@ -167,9 +119,6 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
               {!isAuthenticated && (
                 <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full"></span>
               )}
-              {isDemoMode && (
-                <span className="absolute -bottom-1 -right-1 w-2 h-2 bg-yellow-500 rounded-full"></span>
-              )}
             </button>
 
             {/* User Profile */}
@@ -179,22 +128,17 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
                 className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors duration-200"
                 aria-label="User Profile"
               >
-                {isAuthenticated && user.profilePicture ? (
+                {isAuthenticated && profile?.avatar_url ? (
                   <img
-                    src={user.profilePicture}
-                    alt={user.username}
+                    src={profile.avatar_url}
+                    alt={profile.username}
                     className="w-6 h-6 rounded-full"
                   />
                 ) : (
                   <User className="w-6 h-6" />
                 )}
-                {isAuthenticated && (
-                  <span className="hidden sm:inline text-sm">{user.username}</span>
-                )}
-                {isAuthenticated && isAdmin() && (
-                  <span className="bg-yellow-600 text-black px-1 py-0.5 rounded text-xs font-semibold">
-                    ADMIN
-                  </span>
+                {isAuthenticated && profile && (
+                  <span className="hidden sm:inline text-sm">{profile.username}</span>
                 )}
               </button>
 
@@ -208,15 +152,6 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
                     >
                       View Profile
                     </button>
-                    {isAdmin() && (
-                      <button
-                        onClick={handleAdminClick}
-                        className="w-full text-left px-4 py-2 text-yellow-400 hover:bg-gray-800 transition-colors duration-200 flex items-center space-x-2"
-                      >
-                        <Shield className="w-4 h-4" />
-                        <span>Admin Panel</span>
-                      </button>
-                    )}
                     <button
                       onClick={handleLogout}
                       className="w-full text-left px-4 py-2 text-red-400 hover:bg-gray-800 transition-colors duration-200 flex items-center space-x-2"
@@ -279,21 +214,10 @@ const Header: React.FC<HeaderProps> = ({ onSearchChange, searchQuery }) => {
         )}
       </div>
 
-      {/* Setup Instructions Modal */}
-      {showSetupInstructions && (
-        <SetupInstructions onClose={() => setShowSetupInstructions(false)} />
-      )}
-
-      {/* Admin Panel */}
-      {showAdminPanel && isAdmin() && (
-        <AdminPanel onClose={() => setShowAdminPanel(false)} />
-      )}
-
       {/* Auth Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onSuccess={handleAuthSuccess}
       />
 
       {/* User Profile Modal */}

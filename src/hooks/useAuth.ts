@@ -1,389 +1,145 @@
 import { useState, useEffect } from 'react';
-import { supabase, setUserContext } from '../lib/supabase';
-
-export interface AuthUser {
-  id: string;
-  username: string;
-  profilePicture: string;
-  isAuthenticated: boolean;
-  hasPassword: boolean;
-  isAdmin: boolean;
-}
-
-const GUEST_USER: AuthUser = {
-  id: 'guest',
-  username: 'Guest User',
-  profilePicture: '',
-  isAuthenticated: false,
-  hasPassword: false,
-  isAdmin: false
-};
-
-interface StoredUser {
-  id: string;
-  username: string;
-  profilePicture: string;
-  passwordHash: string;
-  joinDate: string;
-  isAdmin: boolean;
-}
+import { supabase, Profile } from '../lib/supabase';
+import { User, Session } from '@supabase/supabase-js';
 
 export const useAuth = () => {
-  const [user, setUser] = useState<AuthUser>(GUEST_USER);
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
-    checkAuth();
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          await fetchProfile(session.user.id);
+        } else {
+          setProfile(null);
+        }
+        setLoading(false);
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const checkAuth = async () => {
+  const fetchProfile = async (userId: string) => {
     try {
-      const currentUserId = localStorage.getItem('currentUserId');
-      if (currentUserId) {
-        // Set user context for RLS
-        await setUserContext(currentUserId);
-        
-        // Check if user exists in Supabase
-        const { data: profile, error } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('user_id', currentUserId)
-          .maybeSingle();
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
 
-        if (error) {
-          console.error('Error fetching profile from Supabase:', error);
-        }
-
-        if (profile) {
-          setUser({
-            id: profile.user_id,
-            username: profile.username,
-            profilePicture: profile.profile_picture,
-            isAuthenticated: true,
-            hasPassword: true,
-            isAdmin: profile.is_admin
-          });
-        } else {
-          // Fallback to localStorage and create Supabase profile
-          const userProfile = localStorage.getItem(`userProfile_${currentUserId}`);
-          if (userProfile) {
-            const profile: StoredUser = JSON.parse(userProfile);
-            
-            // Create profile in Supabase
-            try {
-              await supabase
-                .from('user_profiles')
-                .upsert({
-                  user_id: profile.id,
-                  username: profile.username,
-                  profile_picture: profile.profilePicture,
-                  is_admin: profile.isAdmin || false
-                });
-            } catch (error) {
-              console.error('Error creating profile in Supabase:', error);
-            }
-
-            setUser({
-              id: profile.id,
-              username: profile.username,
-              profilePicture: profile.profilePicture,
-              isAuthenticated: true,
-              hasPassword: !!profile.passwordHash,
-              isAdmin: profile.isAdmin || false
-            });
-          }
-        }
+      if (error && error.code !== 'PGRST116') {
+        throw error;
       }
+
+      setProfile(data);
     } catch (error) {
-      console.error('Error checking authentication:', error);
-      localStorage.removeItem('currentUserId');
+      console.error('Error fetching profile:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const hashPassword = (password: string): string => {
-    let hash = 0;
-    for (let i = 0; i < password.length; i++) {
-      const char = password.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return hash.toString();
-  };
-
-  const login = async (username: string, password: string, profilePicture?: string, isLogin: boolean = false) => {
-    const userId = `user_${username.toLowerCase()}`;
-    
+  const signUp = async (email: string, password: string, username: string) => {
     try {
-      if (isLogin) {
-        // Set user context for RLS
-        await setUserContext(userId);
-        
-        // Check Supabase first
-        const { data: profile, error } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('user_id', userId)
-          .maybeSingle();
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
 
-        if (error) {
-          console.error('Error fetching profile from Supabase:', error);
-        }
+      if (error) throw error;
 
-        if (profile) {
-          // Verify password (in production, use proper password verification)
-          const passwordHash = hashPassword(password);
-          const storedProfile = localStorage.getItem(`userProfile_${userId}`);
-          
-          if (storedProfile) {
-            const localProfile: StoredUser = JSON.parse(storedProfile);
-            if (localProfile.passwordHash !== passwordHash) {
-              return { success: false, error: 'Invalid password. Please try again.' };
-            }
-          }
-
-          localStorage.setItem('currentUserId', userId);
-          setUser({
-            id: profile.user_id,
-            username: profile.username,
-            profilePicture: profile.profile_picture,
-            isAuthenticated: true,
-            hasPassword: true,
-            isAdmin: profile.is_admin
-          });
-
-          return { success: true };
-        } else {
-          // Fallback to localStorage
-          const userProfile = localStorage.getItem(`userProfile_${userId}`);
-          if (!userProfile) {
-            return { success: false, error: 'User not found. Please sign up first.' };
-          }
-
-          const profile: StoredUser = JSON.parse(userProfile);
-          const passwordHash = hashPassword(password);
-          
-          if (profile.passwordHash !== passwordHash) {
-            return { success: false, error: 'Invalid password. Please try again.' };
-          }
-
-          localStorage.setItem('currentUserId', userId);
-          setUser({
-            id: profile.id,
-            username: profile.username,
-            profilePicture: profile.profilePicture,
-            isAuthenticated: true,
-            hasPassword: true,
-            isAdmin: profile.isAdmin || false
-          });
-
-          return { success: true };
-        }
-      } else {
-        // Sign up new user
-        const existingProfile = localStorage.getItem(`userProfile_${userId}`);
-        if (existingProfile) {
-          return { success: false, error: 'Username already exists. Please choose a different one or sign in.' };
-        }
-
-        const passwordHash = hashPassword(password);
-        const defaultProfilePicture = profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
-        const isAdminUser = username.toLowerCase().includes('admin') || username.toLowerCase().includes('moderator');
-        
-        // Set user context for RLS before creating profile
-        await setUserContext(userId);
-        
-        // Create user profile in Supabase
-        const { data: newProfile, error } = await supabase
-          .from('user_profiles')
-          .upsert({
-            user_id: userId,
+      if (data.user) {
+        // Create profile
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: data.user.id,
             username,
-            profile_picture: defaultProfilePicture,
-            is_admin: isAdminUser
-          })
-          .select()
-          .single();
+            email,
+            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
+          });
 
-        if (error) {
-          console.error('Error creating profile in Supabase:', error);
-          // Continue with localStorage fallback
-        }
-
-        // Save to localStorage as backup
-        const userProfile: StoredUser = {
-          id: userId,
-          username,
-          profilePicture: defaultProfilePicture,
-          passwordHash,
-          joinDate: new Date().toISOString(),
-          isAdmin: isAdminUser
-        };
-
-        localStorage.setItem(`userProfile_${userId}`, JSON.stringify(userProfile));
-        localStorage.setItem('currentUserId', userId);
-        
-        setUser({
-          id: userId,
-          username,
-          profilePicture: defaultProfilePicture,
-          isAuthenticated: true,
-          hasPassword: true,
-          isAdmin: isAdminUser
-        });
-        
-        return { success: true };
+        if (profileError) throw profileError;
       }
+
+      return { data, error: null };
     } catch (error) {
-      console.error('Authentication error:', error);
-      return { success: false, error: 'Authentication failed. Please try again.' };
+      return { data: null, error };
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('currentUserId');
-    setUser(GUEST_USER);
+  const signIn = async (email: string, password: string) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      return { data: null, error };
+    }
   };
 
-  const updateProfile = async (updates: Partial<Pick<AuthUser, 'username' | 'profilePicture'>>) => {
-    if (!user.isAuthenticated) return { success: false, error: 'Not authenticated' };
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (!error) {
+      setUser(null);
+      setProfile(null);
+      setSession(null);
+    }
+    return { error };
+  };
+
+  const updateProfile = async (updates: Partial<Profile>) => {
+    if (!user) return { error: new Error('No user') };
 
     try {
-      const updatedUser = { ...user, ...updates };
-      setUser(updatedUser);
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('user_id', user.id)
+        .select()
+        .single();
 
-      // Set user context for RLS
-      await setUserContext(user.id);
+      if (error) throw error;
 
-      // Update Supabase
-      await supabase
-        .from('user_profiles')
-        .upsert({
-          user_id: user.id,
-          username: updates.username || user.username,
-          profile_picture: updates.profilePicture || user.profilePicture,
-          is_admin: user.isAdmin
-        });
-
-      // Update localStorage
-      const userProfile = JSON.parse(localStorage.getItem(`userProfile_${user.id}`) || '{}');
-      const updatedProfile = { ...userProfile, ...updates };
-      localStorage.setItem(`userProfile_${user.id}`, JSON.stringify(updatedProfile));
-      
-      return { success: true };
+      setProfile(data);
+      return { data, error: null };
     } catch (error) {
-      console.error('Error updating profile:', error);
-      return { success: false, error: 'Failed to update profile' };
+      return { data: null, error };
     }
-  };
-
-  const changePassword = (currentPassword: string, newPassword: string) => {
-    if (!user.isAuthenticated) return { success: false, error: 'Not authenticated' };
-
-    try {
-      const userProfile = JSON.parse(localStorage.getItem(`userProfile_${user.id}`) || '{}');
-      const currentPasswordHash = hashPassword(currentPassword);
-      
-      if (userProfile.passwordHash !== currentPasswordHash) {
-        return { success: false, error: 'Current password is incorrect' };
-      }
-
-      if (newPassword.length < 6) {
-        return { success: false, error: 'New password must be at least 6 characters' };
-      }
-
-      const newPasswordHash = hashPassword(newPassword);
-      userProfile.passwordHash = newPasswordHash;
-      localStorage.setItem(`userProfile_${user.id}`, JSON.stringify(userProfile));
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Error changing password:', error);
-      return { success: false, error: 'Failed to change password' };
-    }
-  };
-
-  const useAdminKey = async (keyCode: string) => {
-    if (!user.isAuthenticated) return { success: false, error: 'Not authenticated' };
-
-    try {
-      // Set user context for RLS
-      await setUserContext(user.id);
-      
-      // Check if key exists and is unused
-      const { data: adminKey, error: keyError } = await supabase
-        .from('admin_keys')
-        .select('*')
-        .eq('key_code', keyCode)
-        .eq('is_used', false)
-        .maybeSingle();
-
-      if (keyError || !adminKey) {
-        return { success: false, error: 'Invalid or already used admin key' };
-      }
-
-      // Mark key as used
-      await supabase
-        .from('admin_keys')
-        .update({
-          is_used: true,
-          used_by: user.id,
-          used_at: new Date().toISOString()
-        })
-        .eq('id', adminKey.id);
-
-      // Update user profile to admin
-      await supabase
-        .from('user_profiles')
-        .upsert({
-          user_id: user.id,
-          username: user.username,
-          profile_picture: user.profilePicture,
-          is_admin: true
-        });
-
-      // Update local state
-      const updatedUser = { ...user, isAdmin: true };
-      setUser(updatedUser);
-
-      // Update localStorage
-      const userProfile = JSON.parse(localStorage.getItem(`userProfile_${user.id}`) || '{}');
-      userProfile.isAdmin = true;
-      localStorage.setItem(`userProfile_${user.id}`, JSON.stringify(userProfile));
-
-      return { success: true };
-    } catch (error) {
-      console.error('Error using admin key:', error);
-      return { success: false, error: 'Failed to use admin key' };
-    }
-  };
-
-  const requireAuth = (): boolean => {
-    if (!user.isAuthenticated) {
-      return false;
-    }
-    return true;
-  };
-
-  const isAdmin = (): boolean => {
-    if (!user.isAuthenticated) return false;
-    
-    return user.isAdmin || 
-           user.username.toLowerCase().includes('admin') ||
-           user.username.toLowerCase().includes('moderator');
   };
 
   return {
     user,
+    profile,
+    session,
     loading,
-    login,
-    logout,
+    signUp,
+    signIn,
+    signOut,
     updateProfile,
-    changePassword,
-    useAdminKey,
-    requireAuth,
-    isAdmin,
-    isAuthenticated: user.isAuthenticated
+    isAuthenticated: !!user,
   };
 };
